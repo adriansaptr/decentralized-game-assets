@@ -151,4 +151,8 @@ MIT (optional)
 
 Adrian Saputra
 
+<<<<<<< HEAD
 GitHub: https://github.com/adriansaptr
+=======
+GitHub: https://github.com/adriansaptr
+>>>>>>> ab14334 (Add README and gitignore)
