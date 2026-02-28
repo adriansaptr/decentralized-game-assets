@@ -1,0 +1,9 @@
+{
+  "name": "Iron Sword",
+  "description": "Basic sword for beginners players",
+  "image": "/images/iron-sword.png",
+  "attributes": [
+    { "trait_type": "rarity", "value": "common" },
+    { "trait_type": "attack", "value": 10 }
+  ]
+}
