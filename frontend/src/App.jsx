@@ -6,12 +6,13 @@ import regJson from "./abi/MetadataRegistry.json";
 import "./App.css";
 
 const REGISTRY_ADDRESS = "0x316955828D5e69eD7b172a5Dc5E433b7B3316544";
-const TOKEN_ADDRESS    = "0x0cD5bFC71afCB7e729f24Cc7442a9d6746C89FD9";
-const BACKEND_BASE     = "http://localhost:5000";
+const TOKEN_ADDRESS = "0x0cD5bFC71afCB7e729f24Cc7442a9d6746C89FD9";
+const BACKEND_BASE = "http://localhost:5000";
+
 const isProd =
+  typeof window !== "undefined" &&
   window.location.hostname !== "localhost" &&
   window.location.hostname !== "127.0.0.1";
-const GANACHE_CHAIN_ID_HEX = "0x539"; 
 
 export default function App() {
   const [account, setAccount] = useState("-");
@@ -42,60 +43,58 @@ export default function App() {
   }, [web3]);
 
   const requireGanache = async () => {
-  const current = await window.ethereum.request({ method: "eth_chainId" });
-  setChainId(current);
+    const current = await window.ethereum.request({ method: "eth_chainId" });
+    setChainId(current);
 
-  // Ganache bisa 1337 (0x539) atau 5777 (0x1691)
-  const allowed = new Set(["0x539", "0x1691"]);
-  if (allowed.has(current)) return true;
+    // Ganache bisa 1337 (0x539) atau 5777 (0x1691)
+    const allowed = new Set(["0x539", "0x1691"]);
+    if (allowed.has(current)) return true;
 
-  // coba switch ke 1337 dulu (yang paling umum kamu pakai sekarang)
-  const preferred = "0x539";
+    const preferred = "0x539"; // kamu pakai 1337
 
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: preferred }],
-    });
-    const after = await window.ethereum.request({ method: "eth_chainId" });
-    setChainId(after);
-    return allowed.has(after);
-  } catch (e) {
-    // kalau belum ada networknya, add
     try {
       await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: preferred,
-            chainName: "Ganache Local",
-            rpcUrls: ["http://127.0.0.1:7545"],
-            nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-          },
-        ],
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: preferred }],
       });
       const after = await window.ethereum.request({ method: "eth_chainId" });
       setChainId(after);
       return allowed.has(after);
-    } catch (e2) {
-      console.error(e2);
-      alert("Network MetaMask belum ke Ganache (RPC http://127.0.0.1:7545, chainId 1337/5777).");
-      return false;
+    } catch (e) {
+      // kalau belum ada networknya, add
+      try {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: preferred,
+              chainName: "Ganache Local",
+              rpcUrls: ["http://127.0.0.1:7545"],
+              nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+            },
+          ],
+        });
+        const after = await window.ethereum.request({ method: "eth_chainId" });
+        setChainId(after);
+        return allowed.has(after);
+      } catch (e2) {
+        console.error(e2);
+        alert("Network MetaMask belum ke Ganache (RPC http://127.0.0.1:7545, chainId 1337/5777).");
+        return false;
+      }
     }
-  }
-};
-
+  };
 
   const connect = async () => {
     try {
       if (!window.ethereum) return alert("MetaMask tidak terdeteksi");
 
+      // VERCEL / PROD: blok connect
       if (isProd) {
-  alert("Portfolio mode: Connect/tx on-chain hanya tersedia saat demo lokal (Ganache).");
-  return;
-}
+        alert("Portfolio mode: Connect/tx on-chain hanya tersedia saat demo lokal (Ganache).");
+        return;
+      }
 
-      // penting: cek network dulu
       const ok = await requireGanache();
       if (!ok) return;
 
@@ -126,11 +125,37 @@ export default function App() {
   };
 
   const loadToken = async () => {
-  try {
-    // PORTFOLIO MODE (Vercel): load metadata dari public folder
-    if (isProd) {
-      const u = `${location.origin}/metadata/${tokenId}.json`;
-      setTokenUri(u);
+    try {
+      // PORTFOLIO MODE (Vercel): ambil metadata static dari public
+      if (isProd) {
+        const u = `${window.location.origin}/metadata/${tokenId}.json`;
+        setTokenUri(u);
+
+        const res = await fetch(u);
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status} dari ${u}\n${txt.slice(0, 200)}`);
+        }
+
+        const json = await res.json();
+        setMeta(json);
+        setBalance("-");
+        return;
+      }
+
+      // LOCAL MODE (on-chain)
+      if (!tokenContract || account === "-") return;
+
+      const bal = await tokenContract.methods.balanceOf(account, tokenId).call();
+      setBalance(String(bal));
+
+      const u = await tokenContract.methods.uri(tokenId).call();
+      setTokenUri(u || "-");
+
+      if (!u) {
+        setMeta(null);
+        return;
+      }
 
       const res = await fetch(u);
       if (!res.ok) {
@@ -140,89 +165,66 @@ export default function App() {
 
       const json = await res.json();
       setMeta(json);
-      setBalance("-");
-      return;
+    } catch (e) {
+      console.error("loadToken error:", e);
+      alert("Load token gagal. Cek console.");
     }
-
-    // LOCAL MODE (on-chain)
-    if (!tokenContract || account === "-") return;
-
-    const bal = await tokenContract.methods.balanceOf(account, tokenId).call();
-    setBalance(String(bal));
-
-    const u = await tokenContract.methods.uri(tokenId).call();
-    setTokenUri(u || "-");
-
-    if (!u) {
-      setMeta(null);
-      return;
-    }
-
-    const res = await fetch(u);
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`HTTP ${res.status} dari ${u}\n${txt.slice(0, 200)}`);
-    }
-
-    const json = await res.json();
-    setMeta(json);
-  } catch (e) {
-    console.error("loadToken error:", e);
-    alert("Load token gagal. Cek console.");
-  }
-};
+  };
 
   const submitProduct = async () => {
-  try {
-    // PORTFOLIO MODE (Vercel): jangan transaksi on-chain
-    if (isProd) {
-      alert(
-        "Portfolio mode: fitur on-chain (setURI + mint) hanya tersedia saat demo lokal.\n\n" +
-        "Untuk demo full: jalankan Ganache + backend + frontend di localhost."
-      );
-      return;
+    try {
+      // PORTFOLIO MODE (Vercel): blok submit
+      if (isProd) {
+        alert(
+          "Portfolio mode: fitur on-chain (setURI + mint) hanya tersedia saat demo lokal.\n\n" +
+            "Untuk demo full: jalankan Ganache + backend + frontend di localhost."
+        );
+        return;
+      }
+
+      if (!tokenContract || !regContract || account === "-") {
+        alert("Connect MetaMask dulu.");
+        return;
+      }
+
+      // 1) save metadata to backend (LOCAL)
+      const payload = {
+        name,
+        description,
+        image: imageUrl,
+        attribute: [
+          { trait_type: "rarity", value: rarity },
+          { trait_type: "attack", value: Number(attack) },
+        ],
+      };
+
+      const res = await fetch(`${BACKEND_BASE}/api/metadata/${tokenId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Gagal simpan metadata di backend. (${res.status}) ${txt}`);
+      }
+
+      const out = await res.json();
+      const url = out.url; // http://localhost:5000/metadata/1.json
+
+      // 2) setURI on-chain
+      await regContract.methods.setURI(tokenId, url).send({ from: account });
+
+      // 3) mint on-chain
+      await tokenContract.methods.mint(account, tokenId, amount, "0x").send({ from: account });
+
+      alert(`Submit sukses ✅\nURI: ${url}`);
+      await loadToken();
+    } catch (e) {
+      console.error("submitProduct error:", e);
+      alert(String(e.message || e));
     }
-
-    // LOCAL MODE (full)
-    if (!tokenContract || !regContract || account === "-") {
-      alert("Connect MetaMask dulu.");
-      return;
-    }
-
-    const payload = {
-      name,
-      description,
-      image: imageUrl,
-      attribute: [
-        { trait_type: "rarity", value: rarity },
-        { trait_type: "attack", value: Number(attack) },
-      ],
-    };
-
-    const res = await fetch(`${BACKEND_BASE}/api/metadata/${tokenId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`Gagal simpan metadata di backend. (${res.status}) ${txt}`);
-    }
-
-    const out = await res.json();
-    const url = out.url; // http://localhost:5000/metadata/1.json
-
-    await regContract.methods.setURI(tokenId, url).send({ from: account });
-    await tokenContract.methods.mint(account, tokenId, amount, "0x").send({ from: account });
-
-    alert(`Submit sukses ✅\nURI: ${url}`);
-    await loadToken();
-  } catch (e) {
-    console.error("submitProduct error:", e);
-    alert(String(e.message || e));
-  }
-};
+  };
 
   const prettyJson = meta ? JSON.stringify(meta, null, 2) : "{}";
   const previewImg = meta?.image || "";
@@ -232,18 +234,25 @@ export default function App() {
       <header className="top">
         <div>
           <h1>Decentralized Game Assets</h1>
-          <div className="subtitle">User input → MetaMask tx → Ganache on-chain ✅</div>
+          <div className="subtitle">
+            {isProd
+              ? "Portfolio Mode (static metadata preview) ✅"
+              : "User input → MetaMask tx → Ganache on-chain ✅"}
+          </div>
         </div>
 
         <div className="actions">
-          <button className="btn" onClick={connect}>Connect MetaMask</button>
+          <button className="btn" onClick={connect} disabled={isProd}>
+            {isProd ? "Portfolio Mode" : "Connect MetaMask"}
+          </button>
+
           <button
-  className="btn"
-  onClick={loadToken}
-  disabled={isProd ? false : (!tokenContract || account === "-")}
->
-  Load Token
-</button>
+            className="btn"
+            onClick={loadToken}
+            disabled={!isProd && (!tokenContract || account === "-")}
+          >
+            Load Token
+          </button>
         </div>
       </header>
 
@@ -312,11 +321,7 @@ export default function App() {
         <section className="card">
           <h2>Preview</h2>
           <div className="preview">
-            {previewImg ? (
-              <img src={previewImg} alt="preview" />
-            ) : (
-              <div className="empty">Belum ada image (load token / submit dulu)</div>
-            )}
+            {previewImg ? <img src={previewImg} alt="preview" /> : <div className="empty">Belum ada image</div>}
 
             <div className="ptext">
               <div className="ptitle">{meta?.name || "-"}</div>
